@@ -45,4 +45,4 @@ def run_example():
 accuracy = run_example()
 
 
-print 'Accuracy %s' % accuracy
+print('Accuracy %s' % accuracy)
