@@ -1,0 +1,11 @@
+dependencies:
+  pre:
+    - pip install numpy
+    - pip install scipy
+    - pip install scikit-learn
+    - rm ~/.gitconfig
+    - touch ~/.gitconfig
+    - git config --global user.email maciej.kula@gmail.com
+    - git config --global user.name "Maciej Kula"
+    - curl -sf -L https://static.rust-lang.org/rustup.sh | sh /dev/stdin --yes
+    - sudo apt-get install libffi-dev

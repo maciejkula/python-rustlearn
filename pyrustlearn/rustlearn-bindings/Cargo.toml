@@ -1,0 +1,11 @@
+[package]
+name = "rustlearn-bindings"
+version = "0.1.0"
+authors = ["maciej <maciejkula@gmail.com>"]
+
+[dependencies]
+rustlearn = "0.3.0"
+
+[lib]
+name = "rustlearn"
+crate-type = ["dylib"]

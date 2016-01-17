@@ -1,0 +1,2 @@
+include .so
+recursive-include rustlearn-bindings *.so
