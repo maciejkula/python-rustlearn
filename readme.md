@@ -289,3 +289,9 @@ def run_example():
 ```
 
 Running this should succeed, resulting in an accuracy of about 0.92.
+
+## Conclusions
+
+The Python scientific ecosystem is amazing, and I wouldn't advise rewriting any of it in Rust.
+
+When writing new extension modules, however, I think Rust presents a very compelling alternative to C, C++, and Cython. It is very expressive and safe, and integrating it with Python is no more difficult than C or C++.
