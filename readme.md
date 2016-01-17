@@ -6,6 +6,16 @@ A simple example of using a Rust library (in this case, [rustlearn](https://gith
 
 We'll we rustlearn to estimate a simple logistic regression model on the MNIST digits dataset --- but we'll do the data processing and model evaluation in Python.
 
+## Installation
+This example is set up as a Python package. You should be able to run it by:
+
+1. Installing the Rust compiler: https://www.rust-lang.org/downloads.html
+2. Installing `libcffi-dev` (on Ubuntu, `sudo apt-get install libcffi-dev`)
+3. Cloning this repository, and
+4. Running `pip install .` in the resulting directory.
+
+You can verify that everything works by running `python setup.py test`.
+
 ## Setting up a C API in Rust
 
 First, we need to create a new crate using `cargo new` and set it to compile to a shared object via `Cargo.toml`:
@@ -19,7 +29,7 @@ name = "rustlearn"
 crate-type = ["dylib"]
 ```
 
-Because we're only writing a simple wrapper, we can start adding code directly in [`lib.rs](/pyrustlearn/rustlearn-bindings/src/lib.rs).
+Because we're only writing a simple wrapper, we can start adding code directly in [`lib.rs`](/pyrustlearn/rustlearn-bindings/src/lib.rs).
 
 The first thing we construct is a helper function which can create a rustlearn `Array` from a raw C pointer:
 
@@ -120,3 +130,162 @@ pub extern fn free_sgdclassifier(model_ptr: * mut multiclass::OneVsRestWrapper<s
     };
 }
 ```
+
+Once this is done, we can simply call `cargo build` to build the shared object we need.
+
+## Using the API from Python
+To write the Python bindings I'm going to use [`cffi`](https://cffi.readthedocs.org/en/latest/).
+
+The first thing we need to do is to describe the C interface and open the `.so` file:
+
+```python
+def _build_bindings():
+
+    ffi = cffi.FFI()
+    ffi.cdef("""
+    struct SGDModel;
+    struct SGDModel *fit_sgdclassifier(float *X_ptr, unsigned long X_rows, unsigned long X_cols,
+                                float *y_ptr, unsigned long y_rows, unsigned long y_cols);
+    float* predict_sgdclassifier(float *X_ptr, unsigned long X_rows, unsigned long X_cols,
+                                 struct SGDModel *model);
+    void free_sgdclassifier(struct SGDModel *model);
+    """)
+
+    path  = os.path.join(os.path.dirname(__file__),
+                         'rustlearn-bindings/target/release/librustlearn.so')
+    lib = ffi.dlopen(path)
+
+    return ffi, lib
+```
+
+The function definitions are the key part. We specify an opaque struct `SGDModel`, and the three functions we've exposed from the Rust code via the `#[no_mangle]` attribute. `cffi` parses and checks their syntax.
+
+We can then open the library by calling `ffi.dlopen(...)`.
+
+To make using the interface easier, we can define a couple of helper functions:
+
+```python
+def _as_float(array):
+    """
+    Cast a np.float32 array to a float*.
+    """
+
+    return ffi.cast('float*', array.ctypes.data)
+
+
+def _as_usize(num):
+    """
+    Cast num to something like a rust usize.
+    """
+
+    return ffi.cast('unsigned long', num)
+
+
+def _as_float_ndarray(ptr, size):
+    """
+    Turn a float* to a numpy array.
+    """
+
+    return np.core.multiarray.int_asbuffer(ptr, size * np.float32.itemsize)
+```
+
+For numpy arrays, `array.ctypes.data` is the memory address of the data buffer: to pass it as `float*`, we simply cast it. (Note that this only works for C-contiguous arrays.)
+
+We can then define an sklearn-like class for our model:
+
+```python
+class SGDClassifier(object):
+
+    def __init__(self):
+        self.model = None
+
+    def fit(self, X, y):
+
+        self.model = lib.fit_sgdclassifier(_as_float(X),
+                                           _as_usize(X.shape[0]),
+                                           _as_usize(X.shape[1]),
+                                           _as_float(y),
+                                           _as_usize(len(y)),
+                                           _as_usize(1))
+
+    def predict(self, X):
+
+        if self.model is None:
+            raise Exception('Call fit before calling predict')
+
+        predictions_ptr = lib.predict_sgdclassifier(
+            _as_float(X), _as_usize(X.shape[0]), _as_usize(X.shape[1]),
+            ffi.cast('struct SGDModel*', self.model)
+        )
+
+        predictions = np.frombuffer(ffi.buffer(predictions_ptr, len(X)
+                                               * ffi.sizeof('float')),
+                                    dtype=np.float32)
+
+        return predictions
+
+    def __del__(self):
+
+        if self.model is not None:
+            lib.free_sgdclassifier(self.model)
+            self.model = None
+```
+
+In the `fit` function, we convert the inputs into pointers, call the Rust API, and get a model pointer back. To predict, we use the predict API function with the new input data and the model pointer. We get back a data pointer which we turn into a numpy array via a cffi buffer. Finally, we add a custom destructor to make sure we clean up the model data when we are finished.
+
+You can see the whole file [here](/pyrustlearn/__init__.py).
+
+## Putting it all together
+To make sure that everything works, we'll [test it](/examples/mnist.py) on the MNIST digits dataset.
+
+Let's define a couple of helper functions:
+
+```python
+import numpy as np
+
+from sklearn.cross_validation import KFold
+from sklearn.datasets import load_digits
+from sklearn.metrics import accuracy_score
+
+from pyrustlearn import SGDClassifier
+
+
+def _get_data():
+
+    data = load_digits()
+
+    X = data.data.astype(np.float32)
+    y = data.target.astype(np.float32)
+
+    return (X, y)
+```
+
+and the main model evaluation loop:
+
+```python
+def run_example():
+
+    data, target = _get_data()
+
+    n_folds = 5
+    accuracy = 0.0
+
+    for (train_idx, test_idx) in KFold(n=len(data), n_folds=n_folds, shuffle=True):
+
+        train_X = data[train_idx]
+        train_y = target[train_idx]
+
+        test_X = data[test_idx]
+        test_y = target[test_idx]
+
+        model = SGDClassifier()
+        model.fit(train_X, train_y)
+
+        predictions = model.predict(test_X)
+
+        accuracy += accuracy_score(predictions, test_y)
+
+    return accuracy / n_folds
+```
+
+Running this should succeed, resulting in an accuracy of about 0.92.

@@ -28,16 +28,25 @@ ffi, lib = _build_bindings()
 
 
 def _as_float(array):
+    """
+    Cast a np.float32 array to a float*.
+    """
 
     return ffi.cast('float*', array.ctypes.data)
 
 
 def _as_usize(num):
+    """
+    Cast num to something like a rust usize.
+    """
 
     return ffi.cast('unsigned long', num)
 
 
 def _as_float_ndarray(ptr, size):
+    """
+    Turn a float* to a numpy array.
+    """
 
     return np.core.multiarray.int_asbuffer(ptr, size * np.float32.itemsize)
 
